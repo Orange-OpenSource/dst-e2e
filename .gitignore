@@ -1,0 +1,8 @@
+.vscode/
+*.pdf
+*/__pycache__/
+build/
+dstc11_e2e.egg-info/
+run.sbatch
+srun.batch
+whisperSLU/hf_*

@@ -1,0 +1,160 @@
+# ################################
+# Model: Whisper (Encoder-Decoder) + NLL
+# Augmentation: TimeDomainSpecAugment
+# Training corpora : Speech Aware DSTC11 (all)
+# Author: Lucas Druart 2024
+# ################################
+
+# General experiment parameters 
+seed: 1989
+__set_seed: !apply:torch.manual_seed [!ref <seed>]
+output_folder: !ref ./results/<version>/<seed>
+save_folder: !ref <output_folder>/save
+train_log: !ref <output_folder>/log/
+file_train_log: !ref <output_folder>/log.txt
+pred_folder: !ref <output_folder>/preds/
+
+# Checkpoints
+whisper_hub: openai/whisper-small.en
+language: english
+model_size: 768
+
+# Data parameters
+data_folder: /data/AUDIO/corpus/dstc11
+version: "local"
+train_splits: ["train_tts"]
+dev_splits: ["dev_tts"]
+test_splits: ["dev_human", "test_tts", "test_human"]
+skip_prep: False
+select_n_sentences: None
+train_csv: !ref <output_folder>/save/train.csv
+valid_csv: 
+    - !ref <output_folder>/save/dev_tts.csv
+test_csv: 
+    - !ref <output_folder>/save/dev_tts.csv
+    - !ref <output_folder>/save/dev_human.csv
+    - !ref <output_folder>/save/test_tts.csv
+    - !ref <output_folder>/save/test_human.csv
+
+# Logging
+debug_print: 3000
+text_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
+    save_file: !ref <file_train_log>
+train_logger: !new:speechbrain.utils.train_logger.TensorboardLogger
+    save_dir: !ref <train_log>
+
+# Training parameters
+lr: 0.0001
+number_of_epochs: 10
+n_epochs_valid: 2
+weight_decay: 0.0001
+batch_size: 4
+valid_batch_size: 1
+gradient_accumulation: 16
+# warmup = #epochs * #examples_train // (10*virtual_batch)
+warmup_steps: !ref <number_of_epochs> * 56750 // (5 * <batch_size> * <gradient_accumulation>)
+anneal_steps: 
+    - !ref <warmup_steps> * 4
+    - !ref <warmup_steps> * 9
+anneal_rates: 
+    - 0.5
+    - 0.1
+
+sample_rate: 16000
+
+# Data Loaders parameters
+num_workers: 2
+sorting: random
+
+train_loader_kwargs:
+    batch_size: !ref <batch_size>
+    num_workers: !ref <num_workers>
+
+valid_loader_kwargs:
+    batch_size: !ref <valid_batch_size>
+    num_workers: !ref <num_workers>
+
+augmentation: !new:speechbrain.lobes.augment.TimeDomainSpecAugment
+    sample_rate: !ref <sample_rate>
+    speeds: [95, 100, 105]
+
+inference: False
+# Choosing whether to perform the inference with the golden previous state
+# or with the previous predicted state
+gold_previous_state: True
+
+# Training output mode: 
+# - transcription and state (transcription)
+# - state only (state)
+output_mode: state
+
+# Normalize the english inputs with
+# the same normalization done in the Whisper paper
+normalized_transcripts: False
+
+# Model parameters
+freeze_whisper: False
+freeze_encoder: False
+epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
+    limit: !ref <number_of_epochs>
+
+# Models
+whisper: !new:speechbrain.lobes.models.huggingface_whisper.HuggingFaceWhisper
+    source: !ref <whisper_hub>
+    freeze: !ref <freeze_whisper>
+    freeze_encoder: !ref <freeze_encoder>
+    save_path: !ref <save_folder>/whisper
+    encoder_only: False
+
+log_softmax: !new:speechbrain.nnet.activations.Softmax
+    apply_log: True
+
+modules:
+    whisper: !ref <whisper>
+
+# Loss and optimization
+nll_loss: !name:speechbrain.nnet.losses.nll_loss
+
+opt_class: !name:torch.optim.AdamW
+    lr: !ref <lr>
+    weight_decay: !ref <weight_decay>
+
+lr_annealing: !new:speechbrain.nnet.schedulers.NoamIntervalScheduler
+    lr_initial: !ref <lr>
+    n_warmup_steps: !ref <warmup_steps>
+    anneal_steps: !ref <anneal_steps>
+    anneal_rates: !ref <anneal_rates>
+
+# Checkpointing
+checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
+    checkpoints_dir: !ref <save_folder>
+    recoverables:
+        whisper: !ref <whisper>
+        scheduler: !ref <lr_annealing>
+        counter: !ref <epoch_counter>
+
+# Metrics
+acc_computer: !name:utils.JointGoalAccuracy.AccuracyStats
+
+# These values are only used for the searchers.
+# They needs to be hardcoded and should not be changed with Whisper.
+# They are used as part of the searching process.
+# The bos token of the searcher will be timestamp_index
+# and will be concatenated with the bos, language and task tokens.
+timestamp_index: 50363
+eos_index: 50257
+bos_index: 50258
+start_prompt_index: 50361
+
+# Decoding parameters
+min_decode_ratio: 0.0
+max_decode_ratio: 0.15
+beam_size: 1
+
+valid_greedy_searcher: !new:S2SWhisperGreedySearcher.S2SWhisperBeamSearch
+    module: [!ref <whisper>]
+    bos_index: !ref <timestamp_index>
+    eos_index: !ref <eos_index>
+    min_decode_ratio: !ref <min_decode_ratio>
+    max_decode_ratio: !ref <max_decode_ratio>
+    beam_size: !ref <beam_size>
