@@ -28,7 +28,7 @@ setup(
             # 'speechbrain==0.5.16', 
             'torch==2.0', 'torchaudio==2.0',
             'tensorboard==2.15.1', 'pandas==2.1.3',
-            'transformers==4.35.2', 'openai-whisper==20231117',
+            'transformers==4.36.0', 'openai-whisper==20231117',
             'seaborn==0.13.0',
             ],
         dependency_links = []
